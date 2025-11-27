@@ -47,22 +47,20 @@ Create your own strategy, you can add parameter but please remain "price" and "e
 
 
 class MyPortfolio:
-    """
-    NOTE: You can modify the initialization function
-    """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, lookback=120, top_n=3, market_timing_window=200):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
         self.lookback = lookback
-        self.gamma = gamma
+        self.top_n = top_n
+        self.market_timing_window = market_timing_window
+        
+        self.spy_sma = Bdf['SPY'].rolling(window=market_timing_window).mean()
 
     def calculate_weights(self):
-        # Get the assets by excluding the specified column
         assets = self.price.columns[self.price.columns != self.exclude]
 
-        # Calculate the portfolio weights
         self.portfolio_weights = pd.DataFrame(
             index=self.price.index, columns=self.price.columns
         )
@@ -70,8 +68,42 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
+        start_index = max(self.lookback, self.market_timing_window) + 1 
         
+        for i in range(start_index, len(self.price)):
+            current_date = self.price.index[i]
+            
+            current_spy_price = self.price['SPY'].iloc[i - 1] 
+      
+            current_spy_sma = self.spy_sma.loc[self.price.index[i - 1]] 
+
+            if current_spy_price < current_spy_sma:
+                weights = pd.Series(0.0, index=assets)
+            else:
+                
+                price_window = self.price[assets].iloc[i - self.lookback - 1 : i]
+                returns_window = self.returns[assets].iloc[i - self.lookback : i]
+                
+                price_start = price_window.iloc[0]
+                price_end = price_window.iloc[-1]
+                momentum = (price_end / price_start) - 1
+                top_performers = momentum.sort_values(ascending=False).index[:self.top_n]
+                
+                volatility = returns_window[top_performers].std()
+                inverse_volatility = 1.0 / volatility.replace(0, np.inf)
+                
+                weights = pd.Series(0.0, index=assets)
+
+                if inverse_volatility.sum() > 0:
+                    normalized_weights = inverse_volatility / inverse_volatility.sum()
+                    weights.loc[top_performers] = normalized_weights.values
+                else:
+                    equal_weight = 1.0 / self.top_n
+                    weights.loc[top_performers] = equal_weight
+            
+            self.portfolio_weights.loc[current_date, assets] = weights.values
         
+        self.portfolio_weights[self.exclude] = 0
         """
         TODO: Complete Task 4 Above
         """
@@ -80,11 +112,9 @@ class MyPortfolio:
         self.portfolio_weights.fillna(0, inplace=True)
 
     def calculate_portfolio_returns(self):
-        # Ensure weights are calculated
         if not hasattr(self, "portfolio_weights"):
             self.calculate_weights()
 
-        # Calculate the portfolio returns
         self.portfolio_returns = self.returns.copy()
         assets = self.price.columns[self.price.columns != self.exclude]
         self.portfolio_returns["Portfolio"] = (
@@ -94,7 +124,6 @@ class MyPortfolio:
         )
 
     def get_results(self):
-        # Ensure portfolio returns are calculated
         if not hasattr(self, "portfolio_returns"):
             self.calculate_portfolio_returns()
 
